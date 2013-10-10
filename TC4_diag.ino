@@ -74,8 +74,9 @@
 // V0.01 Sept. 27,2013 Stan Gardner Initial rev
 // V0.02 Sept. 28,2013 Stan Garnder Add ADC test
 // V0.03 Oct. 7,2013   Stan Gardner added EEprom dump more printout information
-// V0.04 Oct. 7,2013   Stan Gardner added temp calibration support 'S'
-#define BANNER_CAT "TC4_diag V0.04" // version
+// V0.04 Oct. 9,2013   Stan Gardner added temp calibration support 'S'
+// V0.05 Oct. 9,2013   Stan Gardner removed debug #define
+#define BANNER_CAT "TC4_diag V0.05" // version
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #define _READ read
@@ -399,7 +400,8 @@ int j=0,i=0;
     Wire.endTransmission();
   }
 }
-#define A_ADC 0
+//Used to force error condition
+//#define A_ADC 0 
 int check_adc(){
 // check ADC is ready to process conversions
 // Request a conversion, check it started
