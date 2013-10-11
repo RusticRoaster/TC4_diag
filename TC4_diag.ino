@@ -77,7 +77,8 @@
 // V0.04 Oct. 9,2013   Stan Gardner added temp calibration support 'S'
 // V0.05 Oct. 9,2013   Stan Gardner removed debug #define
 // V0.06 Oct. 10,2013   Stan Gardner added read microVolt, code cleanup
-#define BANNER_CAT "TC4_diag V0.06" // version
+// V0.07 Oct. 11,2013   Stan Gardner added readRaw ADC test
+#define BANNER_CAT "TC4_diag V0.07" // version
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #define _READ read
@@ -201,10 +202,11 @@ void display_menu(){
   serialPrintln_P(PSTR("g = change fill Cal offset"));
   serialPrintln_P(PSTR("h = change fill T offset"));
   serialPrintln_P(PSTR("j = change fill K offset"));
-  serialPrintln_P(PSTR("k = Set Number of TC channels to display "));
+  serialPrintln_P(PSTR("k = Set Number of TC channels to display or selects TC "));
   serialPrintln_P(PSTR("m = read TC(s) up to 1000 times"));
   serialPrintln_P(PSTR("M = read TC 0 microVolt "));
   serialPrintln_P(PSTR("n = test adc"));
+  serialPrintln_P(PSTR("N = readRaw adc"));
   serialPrintln_P(PSTR("q = test MCP9800"));
   serialPrintln_P(PSTR("r = eeprom dump"));
   serialPrintln_P(PSTR("s = Calibration reference temp"));
@@ -356,6 +358,9 @@ void processCommand() {  // a newline character has been received, so process th
     break;
    case 'n':   
    check_adc();
+   break;
+   case 'N':   
+   read_raw_adc();
    break;
    case 'q':   
    check_MCP9800();
@@ -658,6 +663,42 @@ int check_adc(){
     return (int)0x00; 
   }
 }
+int read_raw_adc(){
+// check ADC is ready to process conversions
+// Request a conversion, check it started
+// wait make sure it is completed in normal delay
+// check various bits can be set and cleared
+
+  int i;
+  uint8_t a=0,b=0,c=0,stat=0,config_byte=0;
+    serialPrint_P(PSTR("Read Raw ADC data for TC"));
+    Serial.print(channels_displayed-1);
+    serialPrintln_P(PSTR(" output MSB,BYTE2,LSB,STAT"));
+  config_byte = (0x8f | ((channels_displayed-1)<<5));
+  for(i=0;i<10;i++){
+    Wire.beginTransmission( A_ADC );
+    Wire._WRITE( config_byte );
+    Wire.endTransmission();
+    checkStatus(MIN_DELAY); // give the chips time to perform the conversions
+    Wire.requestFrom(A_ADC, 4);
+    a = Wire._READ(); // first data byte
+    b = Wire._READ(); // second data byte
+    c = Wire._READ(); // 3rd data byte
+    stat = Wire._READ(); // read the status byte returned from the ADC
+    if(a < 16)
+      Serial.print(0x00,HEX);
+    Serial.print(a,HEX); serialPrint_P(PSTR(","));
+    if(b < 16)
+      Serial.print(0x00,HEX);
+    Serial.print(b,HEX); serialPrint_P(PSTR(","));
+    if(c < 16)
+      Serial.print(0x00,HEX);
+    Serial.print(c,HEX); serialPrint_P(PSTR(","));
+    if(stat < 16)
+      Serial.print(0x00,HEX);
+    Serial.println(stat,HEX);  
+  }
+}
 
 int check_MCP9800(){
 // check Temp sensor operation
@@ -796,16 +837,17 @@ long uv;
 //  adc.setCfg( ADC_BITS_18 );
   adc.setCal (stored_cal, 0 );
   f.init( 50 );
+  serialPrintln_P(PSTR("#,uVolt x.001,uVolt,GainValue,CALPT"));
   while(--j){
     adc.nextConversion( channels_displayed - 1 );
     delay( 300 );
     uv = f.doFilter( adc.readuV() );
-    Serial.print( i++ ); Serial.print( "," );
-    Serial.print( (float)uv * 0.001, 3 ); Serial.print( "," );
-    Serial.print( uv ); Serial.print( "," );
+    Serial.print( i++ ); serialPrint_P(PSTR( "," ));
+    Serial.print( (float)uv * 0.001, 3 ); serialPrint_P(PSTR( "," ));
+    Serial.print( uv ); serialPrint_P(PSTR( "," ));
     if( uv != 0.0 )
       uv_cal = stored_cal * CALPT / (float) uv;
-    Serial.print( uv_cal, 5 ); Serial.print( "," );
+    Serial.print( uv_cal, 5 ); serialPrint_P(PSTR( "," ));
     Serial.println( round( uv_cal * (float) uv ) );
   }
 }  
