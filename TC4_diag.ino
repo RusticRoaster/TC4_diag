@@ -76,7 +76,8 @@
 // V0.03 Oct. 7,2013   Stan Gardner added EEprom dump more printout information
 // V0.04 Oct. 9,2013   Stan Gardner added temp calibration support 'S'
 // V0.05 Oct. 9,2013   Stan Gardner removed debug #define
-#define BANNER_CAT "TC4_diag V0.05" // version
+// V0.06 Oct. 10,2013   Stan Gardner added read microVolt, code cleanup
+#define BANNER_CAT "TC4_diag V0.06" // version
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #define _READ read
@@ -159,6 +160,12 @@ uint32_t nextLoop;
 float reftime; // reference for measuring elapsed time
 boolean standAlone = true; // default is standalone mode
 
+
+char command[MAX_COMMAND+1]; // input buffer for commands from the serial port
+uint8_t sample_cnt = 0;
+
+
+
 // prototypes
 void serialPrintln_P(const prog_char* s);
 void serialPrint_P(const prog_char* s);
@@ -171,7 +178,7 @@ void resetTimer(void);
 void display_cal(void);
 void display_cal_block(calBlock *caldata);
 void display_menu(void);
-int eeprom_dump(int page);
+void eeprom_dump(int page);
 void show_variables(void);
 int check_adc(void);
 int check_MCP9800(void);
@@ -183,436 +190,8 @@ void checkStatus( uint32_t ms ); // this is an active delay loop
 void get_samples(void); // this function talks to the amb sensor and ADC via I2C
 
 
-void show_variables(void){
-  serialPrintln_P(PSTR("Program Information"));
-  Serial.print(channels_displayed);
-  serialPrintln_P(PSTR(" Number of channels  for Temp"));
-  Serial.print(calibration_temp);
-  serialPrintln_P(PSTR(" Calibration Reference Temperature"));
-  Serial.print(calibration_TC);
-  serialPrintln_P(PSTR(" Which TC is used for Calibration"));
-  Serial.print(verbose_mode);
-  serialPrintln_P(PSTR(" Verbose Debug Mode setting"));
-
-}
-
-char command[MAX_COMMAND+1]; // input buffer for commands from the serial port
-uint8_t sample_cnt = 0;
-
-// T1, T2 = temperatures x 1000
-// t1, t2 = time marks, milliseconds
-// ---------------------------------------------------
-float calcRise( int32_t T1, int32_t T2, int32_t t1, int32_t t2 ) {
-  int32_t dt = t2 - t1;
-  if( dt == 0 ) return 0.0;  // fixme -- throw an exception here?
-  float dT = (T2 - T1) * D_MULT;
-  float dS = dt * 0.001; // convert from milli-seconds to seconds
-  return ( dT / dS ) * 60.0; // rise per minute
-}
-
-void serialPrint_P(const prog_char* s)
-{
-   char* p = (char*)alloca(strlen_P(s) + 1);
-  strcpy_P(p, s);
-  Serial.print(p);
-}
-
-void serialPrintln_P(const prog_char* s)
-{
-  serialPrint_P(s);
-  serialPrint_P(PSTR("\n"));
-}
-void debug_Println_P(const prog_char* s)
-{
-  if(verbose_mode){
-    serialPrint_P(s);
-    serialPrint_P(PSTR("\n"));
-  }
-}
-
-//serialPrint_P(PSTR("Hello"));
-
-// ------------------------------------------------------------------
-void logger_diff()
-{
-  int i=0,j=0;
-  float t1,t2,t_amb;
-
-  // print timestamp from when samples were taken
-  Serial.print( timestamp, DP );
-
-  // print ambient
-  serialPrint_P(PSTR(","));
-#ifdef CELSIUS
-  t_amb = amb.getAmbC();
-#else
-  t_amb = amb.getAmbF();
-#endif
-  Serial.print( t_amb, DP );
-  // print temperature, rate for each channel
-  i = 0;
-  if( channels_displayed == 1 ) {
-    serialPrint_P(PSTR(","));
-    Serial.print( t1 = D_MULT*temps[i], DP );
-    j=i;
-  };
-    i++;
-  
-  if( channels_displayed == 2 ) {
-    serialPrint_P(PSTR(","));
-    Serial.print( t2 = D_MULT * temps[i], DP );
-    j=i;
-  };
-    i++;
-  
-  if( channels_displayed == 3 ) {
-    serialPrint_P(PSTR(","));
-    Serial.print( D_MULT * temps[i], DP );
-    j=i;
-  };
-    i++;
-  
-  if( channels_displayed == 4 ) {
-    serialPrint_P(PSTR(","));
-    Serial.print( D_MULT * temps[i], DP );
-    j=i;
-  };
-    serialPrint_P(PSTR(","));
-    Serial.print( calibration_temp, DP );
-    serialPrint_P(PSTR(","));
-    Serial.print( calibration_temp - D_MULT * temps[j], DP );
-  Serial.println();
-};
-void logger()
-{
-  int i;
-  float t1,t2,t_amb;
-
-  // print timestamp from when samples were taken
-  Serial.print( timestamp, DP );
-
-  // print ambient
-  serialPrint_P(PSTR(","));
-#ifdef CELSIUS
-  t_amb = amb.getAmbC();
-#else
-  t_amb = amb.getAmbF();
-#endif
-  Serial.print( t_amb, DP );
-  // print temperature, rate for each channel
-  i = 0;
-  if( channels_displayed >= 1 ) {
-    serialPrint_P(PSTR(","));
-    Serial.print( t1 = D_MULT*temps[i], DP );
-    i++;
-  };
-  
-  if( channels_displayed >= 2 ) {
-    serialPrint_P(PSTR(","));
-    Serial.print( t2 = D_MULT * temps[i], DP );
-    i++;
-  };
-  
-  if( channels_displayed >= 3 ) {
-    serialPrint_P(PSTR(","));
-    Serial.print( D_MULT * temps[i], DP );
-    i++;
-  };
-  
-  if( channels_displayed >= 4 ) {
-    serialPrint_P(PSTR(","));
-    Serial.print( D_MULT * temps[i], DP );
-  };
-  Serial.println();
-};
-
-// --------------------------------------------
-
-// -------------------------------------
-void append( char* str, char c ) { // reinventing the wheel
-  int len = strlen( str );
-  str[len] = c;
-  str[len+1] = '\0';
-}
-
-// ----------------------------
-void resetTimer() {
-  nextLoop = 10 + millis(); // wait 10 ms and force a sample/log cycle
-  reftime = 0.001 * nextLoop; // reset the reference point for timestamp
-  return;
-}
-void display_cal() {
-  if( readCalBlock( eeprom, caldata ) ) {
-    serialPrintln_P(PSTR(("# EEPROM data read: ")));
-    display_cal_block(&caldata);
-  }
-  else { // if there was a problem with EEPROM read, then use default values
-    serialPrintln_P(PSTR("# Failed to read EEPROM.  Using default calibration data. "));
-  }   
-
-  return;
-}
-
-void display_cal_block(calBlock *caldata) {
-    Serial.print("# PCB = ");
-    Serial.print( caldata->PCB); serialPrint_P(PSTR("  Version "));
-    Serial.println( caldata->version );
-    Serial.print("# cal gain ");
-    Serial.print( caldata->cal_gain, 6 ); serialPrint_P(PSTR("  cal offset "));
-    Serial.println( caldata->cal_offset );
-    Serial.print("# K offset ");
-    Serial.print( caldata->K_offset, 2 ); serialPrint_P(PSTR("  T offset "));
-    Serial.println( caldata->T_offset, 2 );
-  return;
-}
-
-
-int eeprom_dump(int page){
-uint8_t a=0,page_lo=0,page_hi=0;
-int j=0,i=0;
-  page_hi = ((0x80*page & 0xFF00)>>8);
-  if(page % 2 == 1)
-    page_lo = 0x80;
-   else
-    page_lo = 0x00; 
-  Wire.beginTransmission( A_EEPROM );
-  for(j=0;j<8;j++){
-    Wire.beginTransmission( A_EEPROM );
-    Wire._WRITE( page_hi); //address
-    Wire._WRITE( 0x10 * j | page_lo ); // 
-    Wire.endTransmission();
-    Wire.requestFrom( A_EEPROM, 16 );
-    serialPrint_P(PSTR("address 0x"));
-      if((page_hi == 0) || (page_hi < 0x10))    
-        Serial.print(0,HEX);
-    Serial.print(page_hi,HEX);
-    if((j == 0) && (page_lo == 0))    
-        Serial.print(0,HEX);
-    Serial.print((page_lo+j*0x10),HEX);
-    for(i=0;i<16;i++){
-      serialPrint_P(PSTR(" "));
-      a = Wire._READ(); // first data byte
-      if((a == 0) || (a < 0x10))    
-        Serial.print(0,HEX);
-      Serial.print(a,HEX);     
-    }
-    serialPrint_P(PSTR("\n"));
-    Wire.endTransmission();
-  }
-}
-//Used to force error condition
-//#define A_ADC 0 
-int check_adc(){
-// check ADC is ready to process conversions
-// Request a conversion, check it started
-// wait make sure it is completed in normal delay
-// check various bits can be set and cleared
-  int testnum=0,test_stat=0;
-  Wire.beginTransmission( A_ADC );
-  Wire._WRITE( 0x2a );
-  Wire.endTransmission();
-  Wire.requestFrom( A_ADC, 4 );
-  uint8_t a = Wire._READ(); // first data byte
-  uint8_t b = Wire._READ(); // second data byte
-  uint8_t c = Wire._READ(); // 3rd data byte
-  uint8_t stat = Wire._READ(); // read the status byte returned from the ADC
-  debug_Println_P(PSTR("Check to see if the ADC is ready"));
-  debug_print_int(a);  // debug
-  debug_print_int(b);  // debug
-  debug_print_int(c);  // debug
-  debug_print_int(stat);  // debug
-  if(stat & 0x80){
-    debug_Println_P(PSTR("Error ADC not ready"));
-    test_stat |= 1<<testnum;
-  }
-  testnum++;
-  if((stat & 0x7F) != 0x2a){
-    serialPrintln_P(PSTR("Error ADC config bits 1 does not match"));
-    test_stat |= 1<<testnum;
-  }
-  testnum++;
-  Wire.beginTransmission(A_ADC);
-  Wire._WRITE( 0xc5 );
-  Wire.endTransmission();
-  Wire.requestFrom( A_ADC, 4 );
-  a = Wire._READ(); // first data byte
-  b = Wire._READ(); // second data byte
-  c = Wire._READ(); // 3rd data byte
-  stat = Wire._READ(); // read the status byte returned from the ADC
-  debug_Println_P(PSTR("Check to see if the ADC is not ready"));
-  debug_print_int(a);  // debug
-  debug_print_int(b);  // debug
-  debug_print_int(c);  // debug
-  debug_print_int(stat);  // debug
-  if((stat & 0x80) == 0x00){
-    debug_Println_P(PSTR("Error ADC ready too fast"));
-    test_stat |= 1<<testnum;
-  }
-  testnum++;
-  if((stat & 0x7F) != 0x45){
-    debug_Println_P(PSTR("Error ADC config bits 2 does not match"));
-    test_stat |= 1<<testnum;
-  }
-  testnum++;
-  checkStatus(MIN_DELAY); // give the chips time to perform the conversions
-  Wire.requestFrom(A_ADC, 4);
-  a = Wire._READ(); // first data byte
-  b = Wire._READ(); // second data byte
-  c = Wire._READ(); // 3rd data byte
-  stat = Wire._READ(); // read the status byte returned from the ADC
-  debug_Println_P(PSTR("Check to see if the ADC is ready after proper delay"));
-  debug_print_int(a);  // debug
-  debug_print_int(b);  // debug
-  debug_print_int(c);  // debug
-  debug_print_int(stat);  // debug
-  if(stat & 0x80){
-    debug_Println_P(PSTR("Error ADC not ready after delay"));
-    test_stat |= 1<<testnum;
-  }
-  testnum++;
-  if(test_stat){
-    serialPrint_P(PSTR("ADC test fail "));
-    Serial.println(test_stat,HEX);
-    return(test_stat);
-  }
-  else{
-    serialPrintln_P(PSTR("ADC test passed"));
-    return (int)0x00; 
-  }
-}
-
-void debug_print_int(uint8_t a){
-  if(verbose_mode)
-    Serial.println(a,HEX);
-  return;
-}
-
-int check_MCP9800(){
-// check Temp sensor operation
-// write and read programmable registers
-uint8_t a=0,b=0,c=0,testnum=0;
-  Wire.beginTransmission( A_AMB );
-  Wire._WRITE( 0x01 ); //address
-  Wire._WRITE( 0xaa ); // config data
-  debug_Println_P(PSTR("Test register 1 pattern 0xaa"));
-  Wire.endTransmission();
-  Wire.requestFrom( A_AMB, 1 );
-  a = Wire._READ(); // first data byte
-  debug_Println_P(PSTR("Register 1 read  "));
-  debug_print_int(a);  // debug
-  if(a != 0xaa){
-    c |= 1<<testnum;
-  }
-  testnum++;
-  Wire.beginTransmission( A_AMB );
-  Wire._WRITE( 0x01 ); //address
-  Wire._WRITE( 0x55 ); // config data
-  Wire.endTransmission();
-  Wire.requestFrom( A_AMB, 1 );
-  debug_Println_P(PSTR("Test register 1 pattern 0x55"));
-  a = Wire._READ(); // first data byte
-  debug_print_int(a);  // debug
-  if(a != 0x55){
-    c |= 1<<testnum;
-  }
-  testnum++;
-
-//hysteresis register
- Wire.beginTransmission( A_AMB );
-  Wire._WRITE( 0x02 ); //address
-  Wire._WRITE( 0x55 ); // config data
-  Wire._WRITE( 0x00 ); // config data
-  Wire.endTransmission();
-  Wire.requestFrom( A_AMB, 2 );
-  a = Wire._READ(); // first data byte
-  b = Wire._READ(); // first data byte
-  debug_Println_P(PSTR("Test register 2 pattern 0x55 0x00"));
-  debug_Println_P(PSTR("Test register 2 read "));
-  debug_print_int(a);  // debug
-  debug_print_int(b);  // debug
-  if((a != 0x55) || ((b &0x80) != 0x00)){
-    c |= 1<<testnum;
-  }
-  testnum++;
-
- Wire.beginTransmission( A_AMB );
-  Wire._WRITE( 0x02 ); //address
-  Wire._WRITE( 0xaa ); // config data
-  Wire._WRITE( 0x80 ); // config data
-  Wire.endTransmission();
-  Wire.requestFrom( A_AMB, 2 );
-  debug_Println_P(PSTR("Test register 2 pattern 0xaa 0x80"));
-  debug_Println_P(PSTR("Test register 2 read "));
-  a = Wire._READ(); // first data byte
-  b = Wire._READ(); // first data byte
-  debug_print_int(a);  // debug
-  debug_print_int(b);  // debug
-  if((a != 0xaa) || ((b & 0x80) != 0x80)){
-    c |= 1<<testnum;
-  }
-  testnum++;
-
-  //set back to default
- Wire.beginTransmission( A_AMB );
-  Wire._WRITE( 0x02 ); //address
-  Wire._WRITE( 0x4b ); // config data
-  Wire._WRITE( 0x00 ); // config data
-  Wire.endTransmission();
-
-//alarm set point register
- Wire.beginTransmission( A_AMB );
-  Wire._WRITE( 0x03 ); //address
-  Wire._WRITE( 0x55 ); // config data
-  Wire._WRITE( 0x00 ); // config data
-  Wire.endTransmission();
-  Wire.requestFrom( A_AMB, 2 );
-  debug_Println_P(PSTR("Test register 3 pattern 0x55 0x00"));
-  debug_Println_P(PSTR("Test register 3 read "));
-
-  a = Wire._READ(); // first data byte
-  b = Wire._READ(); // first data byte
-  debug_print_int(a);  // debug
-  debug_print_int(b);  // debug
-  if((a != 0x55) || ((b &0x80) != 0x00)){
-    c |= 1<<testnum;
-  }
-  testnum++;
-
- Wire.beginTransmission( A_AMB );
-  Wire._WRITE( 0x03 ); //address
-  Wire._WRITE( 0xaa ); // config data
-  Wire._WRITE( 0x80 ); // config data
-  Wire.endTransmission();
-  Wire.requestFrom( A_AMB, 2 );
-  debug_Println_P(PSTR("Test register 3 pattern 0xaa 0x80"));
-  debug_Println_P(PSTR("Test register 3 read "));
-  a = Wire._READ(); // first data byte
-  b = Wire._READ(); // first data byte
-  debug_print_int(a);  // debug
-  debug_print_int(b);  // debug
-  if((a != 0xaa) || ((b &0x80) != 0x80)){
-    c |= 1<<testnum;
-  }
-  testnum++;
-
-  //set back to default
- Wire.beginTransmission( A_AMB );
-  Wire._WRITE( 0x03 ); //address
-  Wire._WRITE( 0x50 ); // config data
-  Wire._WRITE( 0x00 ); // config data
-  Wire.endTransmission();
-
-  if(c){
-    serialPrint_P(PSTR("MCP9800 test fail "));
-    Serial.println(c,HEX);
-  }
-  else
-    serialPrintln_P(PSTR("MCP9800 test pass"));
-  return 0x00;
-}
-
 void display_menu(){
-serialPrintln_P(PSTR(""));
+  serialPrintln_P(PSTR(""));
   serialPrintln_P(PSTR("a = display cal block"));
   serialPrintln_P(PSTR("b = display cal fill info"));
   serialPrintln_P(PSTR("c = write fill block to eeprom "));
@@ -624,6 +203,7 @@ serialPrintln_P(PSTR(""));
   serialPrintln_P(PSTR("j = change fill K offset"));
   serialPrintln_P(PSTR("k = Set Number of TC channels to display "));
   serialPrintln_P(PSTR("m = read TC(s) up to 1000 times"));
+  serialPrintln_P(PSTR("M = read TC 0 microVolt "));
   serialPrintln_P(PSTR("n = test adc"));
   serialPrintln_P(PSTR("q = test MCP9800"));
   serialPrintln_P(PSTR("r = eeprom dump"));
@@ -634,14 +214,13 @@ serialPrintln_P(PSTR(""));
   serialPrintln_P(PSTR("Enter a Letter to run item"));
   return;
 }
-
+// -------------------------------------
 void input_accepted(void){serialPrintln_P(PSTR("Input Accepted"));}
 void input_error(void){serialPrintln_P(PSTR("Error - line too short"));}
-// -------------------------------------
 void processCommand() {  // a newline character has been received, so process the command
 //  char [MAX_COMMAND+1] cmd_buffer ="";
-  double temp_f;
-  int temp_i;
+  double temp_f = 0.0;
+  int temp_i=0;
 
  switch (command[0]){
    case 'a':
@@ -799,7 +378,7 @@ void processCommand() {  // a newline character has been received, so process th
    case 's':
       if(strlen(command) >= 3){
         temp_f = atof(command+2);
-        if((temp_i > 1000) || (temp_i < 0)){
+        if((temp_f > 1000) || (temp_f < 0)){
           serialPrintln_P(PSTR("Error, enter 0 TO 1000 only"));
         }
         else{       
@@ -809,7 +388,7 @@ void processCommand() {  // a newline character has been received, so process th
       }
       else{
         input_error();
-        serialPrintln_P(PSTR("Usage: m SingleSpace NumberChannelsDisplayedValue"));
+        serialPrintln_P(PSTR("Usage: s SingleSpace IntValue"));
       }        
     break;
 
@@ -836,7 +415,10 @@ void processCommand() {  // a newline character has been received, so process th
         serialPrintln_P(PSTR("Measure Diff On"));
       }
       break;
-      
+  case 'M':
+      read_microvolt();
+      break;
+            
   case 'i':
   case 'l':
   case 'o':
@@ -845,6 +427,453 @@ void processCommand() {  // a newline character has been received, so process th
   display_menu();
   break;
  }
+  return;
+}
+
+void show_variables(void){
+  serialPrintln_P(PSTR("Program Information"));
+  Serial.print(channels_displayed);
+  serialPrintln_P(PSTR(" Number of channels  for Temp"));
+  Serial.print(calibration_temp);
+  serialPrintln_P(PSTR(" Calibration Reference Temperature"));
+  Serial.print(calibration_TC);
+  serialPrintln_P(PSTR(" Which TC is used for Calibration"));
+  Serial.print(verbose_mode);
+  serialPrintln_P(PSTR(" Verbose Debug Mode setting"));
+
+}
+
+void serialPrint_P(const prog_char* s)
+{
+   char* p = (char*)alloca(strlen_P(s) + 1);
+  strcpy_P(p, s);
+  Serial.print(p);
+}
+
+void serialPrintln_P(const prog_char* s)
+{
+  serialPrint_P(s);
+  serialPrint_P(PSTR("\n"));
+}
+void debug_Println_P(const prog_char* s)
+{
+  if(verbose_mode){
+    serialPrint_P(s);
+    serialPrint_P(PSTR("\n"));
+  }
+}
+
+// ------------------------------------------------------------------
+void logger_diff()
+{
+  int i=0,j=0;
+  float t1,t2,t_amb;
+
+  // print timestamp from when samples were taken
+  Serial.print( timestamp, DP );
+
+  // print ambient
+  serialPrint_P(PSTR(","));
+#ifdef CELSIUS
+  t_amb = amb.getAmbC();
+#else
+  t_amb = amb.getAmbF();
+#endif
+  Serial.print( t_amb, DP );
+  // print temperature, rate for each channel
+  i = 0;
+  if( channels_displayed == 1 ) {
+    serialPrint_P(PSTR(","));
+    Serial.print( t1 = D_MULT*temps[i], DP );
+    j=i;
+  };
+    i++;
+  
+  if( channels_displayed == 2 ) {
+    serialPrint_P(PSTR(","));
+    Serial.print( t2 = D_MULT * temps[i], DP );
+    j=i;
+  };
+    i++;
+  
+  if( channels_displayed == 3 ) {
+    serialPrint_P(PSTR(","));
+    Serial.print( D_MULT * temps[i], DP );
+    j=i;
+  };
+    i++;
+  
+  if( channels_displayed == 4 ) {
+    serialPrint_P(PSTR(","));
+    Serial.print( D_MULT * temps[i], DP );
+    j=i;
+  };
+    serialPrint_P(PSTR(","));
+    Serial.print( calibration_temp, DP );
+    serialPrint_P(PSTR(","));
+    Serial.print( calibration_temp - D_MULT * temps[j], DP );
+  Serial.println();
+};
+
+void display_cal() {
+  if( readCalBlock( eeprom, caldata ) ) {
+    serialPrintln_P(PSTR(("# EEPROM data read: ")));
+    display_cal_block(&caldata);
+  }
+  else { // if there was a problem with EEPROM read, then use default values
+    serialPrintln_P(PSTR("# Failed to read EEPROM.  Using default calibration data. "));
+  }   
+
+  return;
+}
+
+void display_cal_block(calBlock *caldata) {
+    Serial.print("# PCB = ");
+    Serial.print( caldata->PCB); serialPrint_P(PSTR("  Version "));
+    Serial.println( caldata->version );
+    Serial.print("# cal gain ");
+    Serial.print( caldata->cal_gain, 6 ); serialPrint_P(PSTR("  cal offset "));
+    Serial.println( caldata->cal_offset );
+    Serial.print("# K offset ");
+    Serial.print( caldata->K_offset, 2 ); serialPrint_P(PSTR("  T offset "));
+    Serial.println( caldata->T_offset, 2 );
+  return;
+}
+void debug_print_int(uint8_t a){
+  if(verbose_mode)
+    Serial.println(a,HEX);
+  return;
+}
+
+void eeprom_dump(int page){
+uint8_t a=0,page_lo=0,page_hi=0;
+int j=0,i=0;
+  page_hi = ((0x80*page & 0xFF00)>>8);
+  if(page % 2 == 1)
+    page_lo = 0x80;
+   else
+    page_lo = 0x00; 
+  Wire.beginTransmission( A_EEPROM );
+  for(j=0;j<8;j++){
+    Wire.beginTransmission( A_EEPROM );
+    Wire._WRITE( page_hi); //address
+    Wire._WRITE( 0x10 * j | page_lo ); // 
+    Wire.endTransmission();
+    Wire.requestFrom( A_EEPROM, 16 );
+    serialPrint_P(PSTR("address 0x"));
+      if((page_hi == 0) || (page_hi < 0x10))    
+        Serial.print(0,HEX);
+    Serial.print(page_hi,HEX);
+    if((j == 0) && (page_lo == 0))    
+        Serial.print(0,HEX);
+    Serial.print((page_lo+j*0x10),HEX);
+    for(i=0;i<16;i++){
+      serialPrint_P(PSTR(" "));
+      a = Wire._READ(); // first data byte
+      if((a == 0) || (a < 0x10))    
+        Serial.print(0,HEX);
+      Serial.print(a,HEX);     
+    }
+    serialPrint_P(PSTR("\n"));
+    Wire.endTransmission();
+  }
+}
+//Used to force error condition
+//#define A_ADC 0 
+int check_adc(){
+// check ADC is ready to process conversions
+// Request a conversion, check it started
+// wait make sure it is completed in normal delay
+// check various bits can be set and cleared
+  int testnum=0,test_stat=0;
+  Wire.beginTransmission( A_ADC );
+  Wire._WRITE( 0x2a );
+  Wire.endTransmission();
+  Wire.requestFrom( A_ADC, 4 );
+  uint8_t a = Wire._READ(); // first data byte
+  uint8_t b = Wire._READ(); // second data byte
+  uint8_t c = Wire._READ(); // 3rd data byte
+  uint8_t stat = Wire._READ(); // read the status byte returned from the ADC
+  debug_Println_P(PSTR("Check to see if the ADC is ready"));
+  debug_print_int(a);  // debug
+  debug_print_int(b);  // debug
+  debug_print_int(c);  // debug
+  debug_print_int(stat);  // debug
+  if(stat & 0x80){
+    debug_Println_P(PSTR("Error ADC not ready"));
+    test_stat |= 1<<testnum;
+  }
+  testnum++;
+  if((stat & 0x7F) != 0x2a){
+    serialPrintln_P(PSTR("Error ADC config bits 1 does not match"));
+    test_stat |= 1<<testnum;
+  }
+  testnum++;
+  Wire.beginTransmission(A_ADC);
+  Wire._WRITE( 0xc5 );
+  Wire.endTransmission();
+  Wire.requestFrom( A_ADC, 4 );
+  a = Wire._READ(); // first data byte
+  b = Wire._READ(); // second data byte
+  c = Wire._READ(); // 3rd data byte
+  stat = Wire._READ(); // read the status byte returned from the ADC
+  debug_Println_P(PSTR("Check to see if the ADC is not ready"));
+  debug_print_int(a);  // debug
+  debug_print_int(b);  // debug
+  debug_print_int(c);  // debug
+  debug_print_int(stat);  // debug
+  if((stat & 0x80) == 0x00){
+    debug_Println_P(PSTR("Error ADC ready too fast"));
+    test_stat |= 1<<testnum;
+  }
+  testnum++;
+  if((stat & 0x7F) != 0x45){
+    debug_Println_P(PSTR("Error ADC config bits 2 does not match"));
+    test_stat |= 1<<testnum;
+  }
+  testnum++;
+  checkStatus(MIN_DELAY); // give the chips time to perform the conversions
+  Wire.requestFrom(A_ADC, 4);
+  a = Wire._READ(); // first data byte
+  b = Wire._READ(); // second data byte
+  c = Wire._READ(); // 3rd data byte
+  stat = Wire._READ(); // read the status byte returned from the ADC
+  debug_Println_P(PSTR("Check to see if the ADC is ready after proper delay"));
+  debug_print_int(a);  // debug
+  debug_print_int(b);  // debug
+  debug_print_int(c);  // debug
+  debug_print_int(stat);  // debug
+  if(stat & 0x80){
+    debug_Println_P(PSTR("Error ADC not ready after delay"));
+    test_stat |= 1<<testnum;
+  }
+  testnum++;
+  if(test_stat){
+    serialPrint_P(PSTR("ADC test fail "));
+    Serial.println(test_stat,HEX);
+    return(test_stat);
+  }
+  else{
+    serialPrintln_P(PSTR("ADC test passed"));
+    return (int)0x00; 
+  }
+}
+
+int check_MCP9800(){
+// check Temp sensor operation
+// write and read programmable registers
+uint8_t a=0,b=0,c=0,testnum=0;
+  Wire.beginTransmission( A_AMB );
+  Wire._WRITE( 0x01 ); //address
+  Wire._WRITE( 0xaa ); // config data
+  debug_Println_P(PSTR("Test register 1 pattern 0xaa"));
+  Wire.endTransmission();
+  Wire.requestFrom( A_AMB, 1 );
+  a = Wire._READ(); // first data byte
+  debug_Println_P(PSTR("Register 1 read  "));
+  debug_print_int(a);  // debug
+  if(a != 0xaa){
+    c |= 1<<testnum;
+  }
+  testnum++;
+  Wire.beginTransmission( A_AMB );
+  Wire._WRITE( 0x01 ); //address
+  Wire._WRITE( 0x55 ); // config data
+  Wire.endTransmission();
+  Wire.requestFrom( A_AMB, 1 );
+  debug_Println_P(PSTR("Test register 1 pattern 0x55"));
+  a = Wire._READ(); // first data byte
+  debug_print_int(a);  // debug
+  if(a != 0x55){
+    c |= 1<<testnum;
+  }
+  testnum++;
+
+//hysteresis register
+ Wire.beginTransmission( A_AMB );
+  Wire._WRITE( 0x02 ); //address
+  Wire._WRITE( 0x55 ); // config data
+  Wire._WRITE( 0x00 ); // config data
+  Wire.endTransmission();
+  Wire.requestFrom( A_AMB, 2 );
+  a = Wire._READ(); // first data byte
+  b = Wire._READ(); // first data byte
+  debug_Println_P(PSTR("Test register 2 pattern 0x55 0x00"));
+  debug_Println_P(PSTR("Test register 2 read "));
+  debug_print_int(a);  // debug
+  debug_print_int(b);  // debug
+  if((a != 0x55) || ((b &0x80) != 0x00)){
+    c |= 1<<testnum;
+  }
+  testnum++;
+
+ Wire.beginTransmission( A_AMB );
+  Wire._WRITE( 0x02 ); //address
+  Wire._WRITE( 0xaa ); // config data
+  Wire._WRITE( 0x80 ); // config data
+  Wire.endTransmission();
+  Wire.requestFrom( A_AMB, 2 );
+  debug_Println_P(PSTR("Test register 2 pattern 0xaa 0x80"));
+  debug_Println_P(PSTR("Test register 2 read "));
+  a = Wire._READ(); // first data byte
+  b = Wire._READ(); // first data byte
+  debug_print_int(a);  // debug
+  debug_print_int(b);  // debug
+  if((a != 0xaa) || ((b & 0x80) != 0x80)){
+    c |= 1<<testnum;
+  }
+  testnum++;
+
+  //set back to default
+ Wire.beginTransmission( A_AMB );
+  Wire._WRITE( 0x02 ); //address
+  Wire._WRITE( 0x4b ); // config data
+  Wire._WRITE( 0x00 ); // config data
+  Wire.endTransmission();
+
+//alarm set point register
+ Wire.beginTransmission( A_AMB );
+  Wire._WRITE( 0x03 ); //address
+  Wire._WRITE( 0x55 ); // config data
+  Wire._WRITE( 0x00 ); // config data
+  Wire.endTransmission();
+  Wire.requestFrom( A_AMB, 2 );
+  debug_Println_P(PSTR("Test register 3 pattern 0x55 0x00"));
+  debug_Println_P(PSTR("Test register 3 read "));
+
+  a = Wire._READ(); // first data byte
+  b = Wire._READ(); // first data byte
+  debug_print_int(a);  // debug
+  debug_print_int(b);  // debug
+  if((a != 0x55) || ((b &0x80) != 0x00)){
+    c |= 1<<testnum;
+  }
+  testnum++;
+
+ Wire.beginTransmission( A_AMB );
+  Wire._WRITE( 0x03 ); //address
+  Wire._WRITE( 0xaa ); // config data
+  Wire._WRITE( 0x80 ); // config data
+  Wire.endTransmission();
+  Wire.requestFrom( A_AMB, 2 );
+  debug_Println_P(PSTR("Test register 3 pattern 0xaa 0x80"));
+  debug_Println_P(PSTR("Test register 3 read "));
+  a = Wire._READ(); // first data byte
+  b = Wire._READ(); // first data byte
+  debug_print_int(a);  // debug
+  debug_print_int(b);  // debug
+  if((a != 0xaa) || ((b &0x80) != 0x80)){
+    c |= 1<<testnum;
+  }
+  testnum++;
+
+  //set back to default
+ Wire.beginTransmission( A_AMB );
+  Wire._WRITE( 0x03 ); //address
+  Wire._WRITE( 0x50 ); // config data
+  Wire._WRITE( 0x00 ); // config data
+  Wire.endTransmission();
+
+  if(c){
+    serialPrint_P(PSTR("MCP9800 test fail "));
+    Serial.println(c,HEX);
+  }
+  else
+    serialPrintln_P(PSTR("MCP9800 test pass"));
+  return 0x00;
+}
+
+#define CALPT 50000.0
+#define DEFAULT_CAL 1.000
+void read_microvolt(void){
+filterRC f;
+long i = 0;
+int j=50;
+float uv_cal;
+float stored_cal = DEFAULT_CAL;
+long uv;
+  uv_cal = stored_cal;
+//  adc.setCfg( ADC_BITS_18 );
+  adc.setCal (stored_cal, 0 );
+  f.init( 50 );
+  while(--j){
+    adc.nextConversion( channels_displayed - 1 );
+    delay( 300 );
+    uv = f.doFilter( adc.readuV() );
+    Serial.print( i++ ); Serial.print( "," );
+    Serial.print( (float)uv * 0.001, 3 ); Serial.print( "," );
+    Serial.print( uv ); Serial.print( "," );
+    if( uv != 0.0 )
+      uv_cal = stored_cal * CALPT / (float) uv;
+    Serial.print( uv_cal, 5 ); Serial.print( "," );
+    Serial.println( round( uv_cal * (float) uv ) );
+  }
+}  
+
+void logger()
+{
+  int i;
+  float t1,t2,t_amb;
+
+  // print timestamp from when samples were taken
+  Serial.print( timestamp, DP );
+
+  // print ambient
+  serialPrint_P(PSTR(","));
+#ifdef CELSIUS
+  t_amb = amb.getAmbC();
+#else
+  t_amb = amb.getAmbF();
+#endif
+  Serial.print( t_amb, DP );
+  // print temperature, rate for each channel
+  i = 0;
+  if( channels_displayed >= 1 ) {
+    serialPrint_P(PSTR(","));
+    Serial.print( t1 = D_MULT*temps[i], DP );
+    i++;
+  };
+  
+  if( channels_displayed >= 2 ) {
+    serialPrint_P(PSTR(","));
+    Serial.print( t2 = D_MULT * temps[i], DP );
+    i++;
+  };
+  
+  if( channels_displayed >= 3 ) {
+    serialPrint_P(PSTR(","));
+    Serial.print( D_MULT * temps[i], DP );
+    i++;
+  };
+  
+  if( channels_displayed >= 4 ) {
+    serialPrint_P(PSTR(","));
+    Serial.print( D_MULT * temps[i], DP );
+  };
+  Serial.println();
+};
+// T1, T2 = temperatures x 1000
+// t1, t2 = time marks, milliseconds
+// ---------------------------------------------------
+float calcRise( int32_t T1, int32_t T2, int32_t t1, int32_t t2 ) {
+  int32_t dt = t2 - t1;
+  if( dt == 0 ) return 0.0;  // fixme -- throw an exception here?
+  float dT = (T2 - T1) * D_MULT;
+  float dS = dt * 0.001; // convert from milli-seconds to seconds
+  return ( dT / dS ) * 60.0; // rise per minute
+}
+
+// -------------------------------------
+void append( char* str, char c ) { // reinventing the wheel
+  int len = strlen( str );
+  str[len] = c;
+  str[len+1] = '\0';
+}
+
+// ----------------------------
+void resetTimer() {
+  nextLoop = 10 + millis(); // wait 10 ms and force a sample/log cycle
+  reftime = 0.001 * nextLoop; // reset the reference point for timestamp
   return;
 }
 
