@@ -78,7 +78,8 @@
 // V0.05 Oct. 9,2013   Stan Gardner removed debug #define
 // V0.06 Oct. 10,2013   Stan Gardner added read microVolt, code cleanup
 // V0.07 Oct. 11,2013   Stan Gardner added readRaw ADC test
-#define BANNER_CAT "TC4_diag V0.07" // version
+// V0.08 Oct. 12,2013   Stan Gardner added i2c scanner
+#define BANNER_CAT "TC4_diag V0.08" // version
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #define _READ read
@@ -214,6 +215,7 @@ void display_menu(){
   serialPrintln_P(PSTR("S = toggle calculate Cal diff"));
   serialPrintln_P(PSTR("v = toggle verbose debug mode"));
   serialPrintln_P(PSTR("V = show program variables"));
+  serialPrintln_P(PSTR("1 = scan I2C bus"));
   serialPrintln_P(PSTR("Enter a Letter to run item"));
   return;
 }
@@ -427,6 +429,10 @@ void processCommand() {  // a newline character has been received, so process th
   case 'M':
       read_microvolt();
       break;
+      break;
+  case '1':
+      i2c_scanner();
+      break;
             
   case 'i':
   case 'l':
@@ -472,6 +478,47 @@ void debug_Println_P(const prog_char* s)
   }
 }
 
+void i2c_scanner()
+{
+  byte error, address;
+  int nDevices;
+  serialPrintln_P(PSTR("expecting 0x48,0x50,0x68"));
+  serialPrintln_P(PSTR("Scanning..."));
+
+  nDevices = 0;
+  for(address = 1; address < 127; address++ )
+  {
+    // The i2c_scanner uses the return value of
+    // the Write.endTransmisstion to see if
+    // a device did acknowledge to the address.
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+
+    if (error == 0)
+    {
+      serialPrint_P(PSTR("I2C device found at address 0x"));
+      if (address<16)
+        serialPrint_P(PSTR("0"));
+      Serial.print(address,HEX);
+      serialPrintln_P(PSTR("  !"));
+
+      nDevices++;
+    }
+    else if (error==4)
+    {
+      serialPrint_P(PSTR("Unknow error at address 0x"));
+      if (address<16)
+        serialPrint_P(PSTR("0"));
+      Serial.println(address,HEX);
+    }    
+  }
+  if (nDevices == 0)
+    serialPrintln_P(PSTR("No I2C devices found\n"));
+  else
+    serialPrintln_P(PSTR("done\n"));
+
+  delay(5000);           // wait 5 seconds for next scan
+}
 // ------------------------------------------------------------------
 void logger_diff()
 {
