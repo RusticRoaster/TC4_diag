@@ -204,10 +204,11 @@ void display_menu(){
   serialPrintln_P(PSTR("j = change fill K offset"));
   serialPrintln_P(PSTR("k = Set Number of TC channels to display or selects TC "));
   serialPrintln_P(PSTR("m = read TC(s) up to 1000 times"));
-  serialPrintln_P(PSTR("M = read TC 0 microVolt "));
+  serialPrintln_P(PSTR("M = read TC microVolt "));
   serialPrintln_P(PSTR("n = test adc"));
-  serialPrintln_P(PSTR("N = readRaw adc"));
+  serialPrintln_P(PSTR("N = read Raw adc data"));
   serialPrintln_P(PSTR("q = test MCP9800"));
+  serialPrintln_P(PSTR("Q = read Raw MCP9800 data"));
   serialPrintln_P(PSTR("r = eeprom dump"));
   serialPrintln_P(PSTR("s = Calibration reference temp"));
   serialPrintln_P(PSTR("S = toggle calculate Cal diff"));
@@ -364,6 +365,9 @@ void processCommand() {  // a newline character has been received, so process th
    break;
    case 'q':   
    check_MCP9800();
+   break;
+   case 'Q':   
+   readraw_MCP9800();
    break;
     case 'r':   
       if(strlen(command) >= 3){
@@ -664,16 +668,13 @@ int check_adc(){
   }
 }
 int read_raw_adc(){
-// check ADC is ready to process conversions
-// Request a conversion, check it started
-// wait make sure it is completed in normal delay
-// check various bits can be set and cleared
-
+// Read Raw data from the ADC 
+// using 1 conversion 18bit sanple Gain 8
   int i;
   uint8_t a=0,b=0,c=0,stat=0,config_byte=0;
-    serialPrint_P(PSTR("Read Raw ADC data for TC"));
-    Serial.print(channels_displayed-1);
-    serialPrintln_P(PSTR(" output MSB,BYTE2,LSB,STAT"));
+  serialPrint_P(PSTR("Read Raw ADC data for TC"));
+  Serial.print(channels_displayed-1);
+  serialPrintln_P(PSTR(" output MSB,BYTE2,LSB,STAT"));
   config_byte = (0x8f | ((channels_displayed-1)<<5));
   for(i=0;i<10;i++){
     Wire.beginTransmission( A_ADC );
@@ -699,7 +700,35 @@ int read_raw_adc(){
     Serial.println(stat,HEX);  
   }
 }
+int readraw_MCP9800(){
+// Read Raw data from the Ambient Temp sensor Temp register  
 
+  int i;
+  uint8_t a=0,b=0;
+  serialPrintln_P(PSTR("Read Raw temp data for MCP9800"));
+  serialPrintln_P(PSTR("MSB,LSB"));
+
+  Wire.beginTransmission( A_AMB );
+  Wire._WRITE( 0x01 ); //address
+  Wire._WRITE( 0xE0 ); // config data
+  Wire.endTransmission();
+  Wire.beginTransmission( A_AMB );
+  Wire._WRITE( 0x00 ); //set temp address
+  Wire.endTransmission();
+
+  for(i=0;i<10;i++){
+    checkStatus(MIN_DELAY); // give the chips time to perform the conversions
+    Wire.requestFrom(A_AMB, 2);
+    a = Wire._READ(); // first data byte
+    b = Wire._READ(); // second data byte
+    if(a < 16)
+      Serial.print(0x00,HEX);
+    Serial.print(a,HEX); serialPrint_P(PSTR(","));
+    if(b < 16)
+      Serial.print(0x00,HEX);
+    Serial.println(b,HEX); 
+  }
+}
 int check_MCP9800(){
 // check Temp sensor operation
 // write and read programmable registers
