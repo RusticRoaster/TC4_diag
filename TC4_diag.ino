@@ -79,7 +79,8 @@
 // V0.06 Oct. 10,2013   Stan Gardner added read microVolt, code cleanup
 // V0.07 Oct. 11,2013   Stan Gardner added readRaw ADC test
 // V0.08 Oct. 12,2013   Stan Gardner added i2c scanner
-#define BANNER_CAT "TC4_diag V0.08" // version
+// V0.09 Oct. 18,2013   Stan Gardner added toggle and read pin 
+#define BANNER_CAT "TC4_diag V0.09" // version
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #define _READ read
@@ -124,6 +125,34 @@ uint8_t calibration_TC = 1;  //which Tc to use for TC calibration
 uint8_t verbose_mode = 0;  //toggle to display extra debug info 
 uint8_t measure_diff=0;
 
+//Dont mess with serial port or I2C bus
+#define MAX_PIN 17
+#define MIN_PIN 2
+
+uint8_t pin2read=0;
+uint8_t read_pin_mode=0;
+
+uint8_t Toggle_mode=0;
+uint8_t toggle_pin=0;
+uint8_t last_toggle = 0;
+uint8_t default_pinmode[MAX_PIN-MIN_PIN+1]={
+  INPUT_PULLUP, /*2*/
+  INPUT_PULLUP,
+  INPUT_PULLUP,
+  INPUT_PULLUP,
+  INPUT_PULLUP,
+  INPUT_PULLUP,
+  INPUT_PULLUP,/*8*/
+  OUTPUT,      /*OT1*/
+  OUTPUT,      /*0T2*/
+  INPUT_PULLUP,
+  INPUT_PULLUP,
+  OUTPUT,      /*13 Arduino LED Blink PIN*/
+  INPUT_PULLUP,/*AIN0*/
+  INPUT_PULLUP,/*AIN1*/
+  INPUT_PULLUP,/*16*/
+  INPUT_PULLUP};
+  
 char *input_ptr;
 //shadow memory of information to fill eeprom calibration
 calBlock blank_fill= {
@@ -213,6 +242,10 @@ void display_menu(){
   serialPrintln_P(PSTR("r = eeprom dump"));
   serialPrintln_P(PSTR("s = Calibration reference temp"));
   serialPrintln_P(PSTR("S = toggle calculate Cal diff"));
+  serialPrintln_P(PSTR("T = pin number to toggle(arduino numbers 2-17 or T enter to reset)"));
+  serialPrintln_P(PSTR("t = toggle pin"));
+  serialPrintln_P(PSTR("U = pin number to read(arduino numbers 2-17 or U enter to reset)"));
+  serialPrintln_P(PSTR("u = read pin"));
   serialPrintln_P(PSTR("v = toggle verbose debug mode"));
   serialPrintln_P(PSTR("V = show program variables"));
   serialPrintln_P(PSTR("1 = scan I2C bus"));
@@ -226,7 +259,10 @@ void processCommand() {  // a newline character has been received, so process th
 //  char [MAX_COMMAND+1] cmd_buffer ="";
   double temp_f = 0.0;
   int temp_i=0;
-
+  if(check_I2C()){
+    serialPrintln_P(PSTR("TroubleShoot the problem then continue"));
+    return;
+  }
  switch (command[0]){
    case 'a':
     display_cal();
@@ -359,6 +395,9 @@ void processCommand() {  // a newline character has been received, so process th
         serialPrintln_P(PSTR("Usage: m SingleSpace NumberChannelsDisplayedValue"));
       }        
     break;
+  case 'M':
+      read_microvolt();
+      break;
    case 'n':   
    check_adc();
    break;
@@ -372,18 +411,26 @@ void processCommand() {  // a newline character has been received, so process th
    readraw_MCP9800();
    break;
     case 'r':   
-      if(strlen(command) >= 3){
-         
+      if(strlen(command) >= 3){         
         temp_i = atoi(command+2);
-        if((temp_i > 511) || (temp_i < 0)){
+        if((temp_i > 512) || (temp_i < 0)){
           serialPrintln_P(PSTR("Error, enter 0 TO 511 only"));
         }
         else{       
-           eeprom_dump(temp_i);
+          if(temp_i == 512){
+            temp_i=511;
+            while(temp_i){
+              eeprom_dump(temp_i);
+              temp_i--;
+            }
+          }
+          else{
+              eeprom_dump(temp_i);
+          }
         }
       }
       else{
-      eeprom_dump(0);
+        eeprom_dump(0);
       }
    break;
    case 's':
@@ -403,6 +450,28 @@ void processCommand() {  // a newline character has been received, so process th
       }        
     break;
 
+  case 'S':
+      if(measure_diff){
+        measure_diff = 0;
+        serialPrintln_P(PSTR("Measure Diff Off"));
+      }
+      else{
+        measure_diff = 1;
+        serialPrintln_P(PSTR("Measure Diff On"));
+      }
+      break;
+   case 'T':
+      set_toggle_pin();
+    break;
+  case 't':
+      toggle_pins();
+      break;
+   case 'U':
+      set_read_pin();
+    break;
+  case 'u':
+      read_pins();
+      break;
   case 'V':
       show_variables();
       break;
@@ -416,20 +485,7 @@ void processCommand() {  // a newline character has been received, so process th
         serialPrintln_P(PSTR("Verbose Mode On"));
       }
       break;
-  case 'S':
-      if(measure_diff){
-        measure_diff = 0;
-        serialPrintln_P(PSTR("Measure Diff Off"));
-      }
-      else{
-        measure_diff = 1;
-        serialPrintln_P(PSTR("Measure Diff On"));
-      }
-      break;
-  case 'M':
-      read_microvolt();
-      break;
-      break;
+
   case '1':
       i2c_scanner();
       break;
@@ -455,6 +511,14 @@ void show_variables(void){
   serialPrintln_P(PSTR(" Which TC is used for Calibration"));
   Serial.print(verbose_mode);
   serialPrintln_P(PSTR(" Verbose Debug Mode setting"));
+   Serial.print(Toggle_mode);
+  serialPrintln_P(PSTR(" Toggle pin mode ON when 1"));
+   Serial.print(toggle_pin);
+  serialPrintln_P(PSTR(" Pin that toggle when toggle_mode = 1"));
+   Serial.print(read_pin_mode);
+  serialPrintln_P(PSTR(" Read pin mode ON when 1"));
+   Serial.print(pin2read);
+  serialPrintln_P(PSTR(" Pin that is read when read_pin_mode = 1"));
 
 }
 
@@ -477,11 +541,160 @@ void debug_Println_P(const prog_char* s)
     serialPrint_P(PSTR("\n"));
   }
 }
+void toggle_pins(void){
+  if(Toggle_mode){
+    serialPrint_P(PSTR("Pin "));
+    if(last_toggle){
+      digitalWrite(toggle_pin,0);
+      Serial.print(toggle_pin);
+        serialPrintln_P(PSTR(" Toggled Low"));
+    }
+    else{
+      digitalWrite(toggle_pin,1);
+      Serial.print(toggle_pin);
+        serialPrintln_P(PSTR(" Toggled High"));
+    }
+    last_toggle = !last_toggle;
+  }
+  else{
+        serialPrintln_P(PSTR(" Toggle Pin not set"));
+  }    
+}
+
+void set_toggle_pin(void){
+  int temp_i = 0;
+  if(strlen(command) >= 3){
+    temp_i = atoi(command+2);
+     if((temp_i > MAX_PIN) || (temp_i < MIN_PIN)){
+          serialPrint_P(PSTR("Error, enter a number between  "));
+          Serial.print(MIN_PIN);
+          serialPrint_P(PSTR(" and "));
+          Serial.println(MAX_PIN);          
+     }
+     else{       
+        if(Toggle_mode && toggle_pin){
+          if(default_pinmode[toggle_pin-MIN_PIN] != OUTPUT){
+            pinMode(toggle_pin,default_pinmode[toggle_pin-MIN_PIN]);  
+          }
+          serialPrint_P(PSTR("Pin toggle on pin "));
+          Serial.print(toggle_pin);
+          serialPrintln_P(PSTR(" turned Off"));
+          if(default_pinmode[toggle_pin-MIN_PIN] == OUTPUT){
+            serialPrint_P(PSTR("Pin default is output, leaving set to "));
+            Serial.println(last_toggle);
+          }
+        }
+        toggle_pin = (uint8_t)temp_i;        
+        last_toggle = 0;
+        Toggle_mode=1;
+        pinMode(toggle_pin,OUTPUT);
+        digitalWrite(toggle_pin,0);                 
+        input_accepted();
+     }
+  }
+  else{
+      if(toggle_pin){
+        if(default_pinmode[toggle_pin-MIN_PIN] != OUTPUT){
+          pinMode(toggle_pin,default_pinmode[toggle_pin-MIN_PIN]);  
+        }
+        serialPrint_P(PSTR("Pin toggle on pin "));
+        Serial.print(toggle_pin);
+        serialPrintln_P(PSTR(" turned Off"));
+        if(default_pinmode[toggle_pin-MIN_PIN] == OUTPUT){
+          serialPrint_P(PSTR("Pin default is output, leaving set to "));
+          Serial.println(last_toggle);
+        }
+      }
+      else{
+        serialPrintln_P(PSTR("Toggle still off"));
+      }
+      last_toggle = 0;
+      Toggle_mode=0;
+      toggle_pin=0;      
+  }        
+  return;
+}
+void read_pins(void){
+  if(read_pin_mode){
+    serialPrint_P(PSTR("Pin "));
+    if(digitalRead(pin2read)){
+      Serial.print(pin2read);
+      serialPrintln_P(PSTR(" is High"));
+    }
+    else{
+      Serial.print(pin2read);
+      serialPrintln_P(PSTR(" is Low"));
+    }
+  }
+  else{
+        serialPrintln_P(PSTR(" Read Pin not set"));
+  }    
+}
+
+
+void set_read_pin(void){
+  int temp_i = 0;
+  if(strlen(command) >= 3){
+    temp_i = atoi(command+2);
+     if((temp_i > MAX_PIN) || (temp_i < MIN_PIN)){
+          serialPrint_P(PSTR("Error, enter a number between  "));
+          Serial.print(MIN_PIN);
+          serialPrint_P(PSTR(" and "));
+          Serial.println(MAX_PIN);          
+     }
+     else{       
+        if(read_pin_mode && pin2read){
+          pinMode(pin2read,default_pinmode[pin2read-MIN_PIN]);  
+          if(default_pinmode[pin2read-MIN_PIN] == OUTPUT)
+            digitalWrite(pin2read,0);
+        }
+        pin2read = (uint8_t)temp_i;        
+        read_pin_mode=1;
+        pinMode(pin2read,INPUT_PULLUP);
+        input_accepted();
+     }
+  }
+  else{
+      read_pin_mode=0;
+      if(pin2read){
+        pinMode(pin2read,default_pinmode[pin2read-MIN_PIN]);  
+        if(default_pinmode[pin2read-MIN_PIN] == OUTPUT)
+           digitalWrite(pin2read,0);
+        serialPrint_P(PSTR("Read  pin "));
+        Serial.print(pin2read);
+        serialPrintln_P(PSTR(" turned Off"));
+      }
+      else{
+        serialPrintln_P(PSTR("Read pin still off"));
+      }
+      pin2read=0;      
+  }        
+  return;
+}
+
+int check_I2C(void)
+{
+  int rval=0;
+  if(!digitalRead(19)){
+    serialPrintln_P(PSTR("Error I2C clock pin low"));
+    rval=1;
+  }    
+  if(!digitalRead(18)){
+    serialPrintln_P(PSTR("Error I2C data pin low")); 
+    rval +=2;
+  }
+  return (rval);
+}
+
 
 void i2c_scanner()
 {
   byte error, address;
   int nDevices;
+  
+  if(check_I2C())
+    return;
+    
   serialPrintln_P(PSTR("expecting 0x48,0x50,0x68"));
   serialPrintln_P(PSTR("Scanning..."));
 
@@ -716,7 +929,7 @@ int check_adc(){
 }
 int read_raw_adc(){
 // Read Raw data from the ADC 
-// using 1 conversion 18bit sanple Gain 8
+// using 1 conversion 18bit sample Gain 8
   int i;
   uint8_t a=0,b=0,c=0,stat=0,config_byte=0;
   serialPrint_P(PSTR("Read Raw ADC data for TC"));
@@ -1047,25 +1260,38 @@ void get_samples() // this function talks to the amb sensor and ADC via I2C
 //
 void setup()
 {
+  int i=0;
   delay(500);
-  Wire.begin(); 
-  
+
+  for (i=0;i <= (MAX_PIN-MIN_PIN);i++){
+    pinMode(MIN_PIN+i,default_pinmode[i]);
+    if(default_pinmode[i]==OUTPUT)
+      digitalWrite(i+MIN_PIN,0);
+  }    
+
   Serial.begin(BAUD);
   delay(500);
   amb.init( AMB_FILTER );  // initialize ambient temp filtering
   serialPrintln_P(PSTR(BANNER_CAT));
-
-  // read calibration and identification data from eeprom
-  if( readCalBlock( eeprom, caldata ) ) {
-    serialPrintln_P(PSTR(("valid calblock found, using content")));
-    adc.setCal( caldata.cal_gain, caldata.cal_offset );
-    amb.setOffset( caldata.K_offset );
+  if(check_I2C()){
+    serialPrintln_P(PSTR("TroubleShoot the problem then continue"));
   }
-  else { // if there was a problem with EEPROM read, then use default values
-    serialPrintln_P(PSTR(("# Failed to read EEPROM.  Using default calibration data. ")));
-    adc.setCal( CAL_GAIN, UV_OFFSET );
-    amb.setOffset( AMB_OFFSET );
-  }   
+  else{
+    Wire.begin(); 
+    // read calibration and identification data from eeprom
+    if( readCalBlock( eeprom, caldata ) ) {
+      serialPrintln_P(PSTR(("valid calblock found, using content")));
+      adc.setCal( caldata.cal_gain, caldata.cal_offset );
+      amb.setOffset( caldata.K_offset );
+    }
+    else { // if there was a problem with EEPROM read, then use default values
+      serialPrintln_P(PSTR(("# Failed to read EEPROM.  Using default calibration data. ")));
+      adc.setCal( CAL_GAIN, UV_OFFSET );
+      amb.setOffset( AMB_OFFSET );
+    }   
+
+  }
+
   display_menu();
 
   // write header to serial port
@@ -1078,6 +1304,7 @@ void setup()
   nextLoop = 2000;
   reftime = 0.001 * nextLoop; // initialize reftime to the time of first sample
   first = true;
+  
 }
 
 // -----------------------------------------------------------------
