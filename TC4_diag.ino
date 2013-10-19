@@ -80,7 +80,8 @@
 // V0.07 Oct. 11,2013   Stan Gardner added readRaw ADC test
 // V0.08 Oct. 12,2013   Stan Gardner added i2c scanner
 // V0.09 Oct. 18,2013   Stan Gardner added toggle and read pin 
-#define BANNER_CAT "TC4_diag V0.09" // version
+// V0.10 Oct. 19,2013   Stan Gardner added copy eeprom to fill 
+#define BANNER_CAT "TC4_diag V0.10" // version
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #define _READ read
@@ -226,6 +227,7 @@ void display_menu(){
   serialPrintln_P(PSTR("a = display cal block"));
   serialPrintln_P(PSTR("b = display cal fill info"));
   serialPrintln_P(PSTR("c = write fill block to eeprom "));
+  serialPrintln_P(PSTR("C = Copy cal block from eeprom to fill block "));
   serialPrintln_P(PSTR("d = change fill PCB, Should start TC4"));
   serialPrintln_P(PSTR("e = change fill Version"));
   serialPrintln_P(PSTR("f = change fill Cal Gain"));
@@ -280,6 +282,9 @@ void processCommand() {  // a newline character has been received, so process th
     amb.setOffset( caldata.K_offset );
     serialPrintln_P(PSTR(""));
     break;
+   case 'C':
+     copy_eeprom2fill();
+     break; 
    case 'd':
       if(strlen(command) >= 3){
         input_ptr = &blank_fill.PCB[0];
@@ -795,6 +800,20 @@ void display_cal() {
 
   return;
 }
+void copy_eeprom2fill() {
+
+  if( readCalBlock( eeprom, caldata ) ) {
+    blank_fill=caldata;
+    serialPrintln_P(PSTR(("# EEPROM copied to fill_block, new values: ")));
+    display_cal_block(&blank_fill);
+  }
+  else { // if there was a problem with EEPROM read, then use default values
+    serialPrintln_P(PSTR("# Failed to read EEPROM.  No copy done "));
+  }   
+
+  return;
+}
+
 
 void display_cal_block(calBlock *caldata) {
     Serial.print("# PCB = ");
