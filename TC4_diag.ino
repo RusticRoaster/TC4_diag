@@ -81,7 +81,8 @@
 // V0.08 Oct. 12,2013   Stan Gardner added i2c scanner
 // V0.09 Oct. 18,2013   Stan Gardner added toggle and read pin 
 // V0.10 Oct. 19,2013   Stan Gardner added copy eeprom to fill 
-#define BANNER_CAT "TC4_diag V0.10" // version
+// V0.10 Oct. 20,2013   Stan Gardner added powerup pin checking 
+#define BANNER_CAT "TC4_diag V0.11" // version
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #define _READ read
@@ -1292,6 +1293,16 @@ void setup()
   delay(500);
   amb.init( AMB_FILTER );  // initialize ambient temp filtering
   serialPrintln_P(PSTR(BANNER_CAT));
+
+  for (i=0;i <= (MAX_PIN-MIN_PIN);i++){
+    if(!digitalRead(i+MIN_PIN) && (default_pinmode[i]!=OUTPUT)){
+      serialPrint_P(PSTR("Pin "));
+      Serial.print(i+MIN_PIN);
+      serialPrintln_P(PSTR(" is Not High"));
+    }      
+  }    
+
+
   if(check_I2C()){
     serialPrintln_P(PSTR("TroubleShoot the problem then continue"));
   }
