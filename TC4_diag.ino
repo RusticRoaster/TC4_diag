@@ -81,8 +81,9 @@
 // V0.08 Oct. 12,2013   Stan Gardner added i2c scanner
 // V0.09 Oct. 18,2013   Stan Gardner added toggle and read pin 
 // V0.10 Oct. 19,2013   Stan Gardner added copy eeprom to fill 
-// V0.10 Oct. 20,2013   Stan Gardner added powerup pin checking 
-#define BANNER_CAT "TC4_diag V0.11" // version
+// V0.11 Oct. 20,2013   Stan Gardner added powerup pin checking 
+// V0.12 Oct. 23,2013   Stan Gardner added input overrun protect to PCB,version commands 
+#define BANNER_CAT "TC4_diag V0.12" // version
 
 #if defined(ARDUINO) && ARDUINO >= 100
 #define _READ read
@@ -290,6 +291,7 @@ void processCommand() {  // a newline character has been received, so process th
       if(strlen(command) >= 3){
         input_ptr = &blank_fill.PCB[0];
         strncpy(input_ptr,command+2,sizeof(blank_fill.PCB));
+        blank_fill.PCB[sizeof(blank_fill.PCB)-1]='\0';
         input_accepted();
       }
       else{
@@ -301,6 +303,7 @@ void processCommand() {  // a newline character has been received, so process th
       if(strlen(command) >= 3){
         input_ptr = &blank_fill.version[0];
         strncpy(input_ptr,command+2,sizeof(blank_fill.version));
+        blank_fill.version[sizeof(blank_fill.version)-1]='\0';
         input_accepted();
       }
       else{
@@ -360,6 +363,7 @@ void processCommand() {  // a newline character has been received, so process th
         }
         else{       
           channels_displayed = (uint8_t)temp_i;        
+          calibration_TC=channels_displayed;
           input_accepted();
         }
       }
@@ -390,8 +394,7 @@ void processCommand() {  // a newline character has been received, so process th
             if( channels_displayed >= 2 ) serialPrint_P(PSTR(",T1"));
             if( channels_displayed >= 3 ) serialPrint_P(PSTR(",T2"));
             if( channels_displayed >= 4 ) serialPrint_P(PSTR(",T3"));
-          }
-            
+          }           
           serialPrintln_P(PSTR(""));
           resetTimer();
          }
@@ -452,7 +455,7 @@ void processCommand() {  // a newline character has been received, so process th
       }
       else{
         input_error();
-        serialPrintln_P(PSTR("Usage: s SingleSpace IntValue"));
+        serialPrintln_P(PSTR("Usage: s SingleSpace floatValue"));
       }        
     break;
 
@@ -508,23 +511,35 @@ void processCommand() {  // a newline character has been received, so process th
 }
 
 void show_variables(void){
-  serialPrintln_P(PSTR("Program Information"));
-  Serial.print(channels_displayed);
-  serialPrintln_P(PSTR(" Number of channels  for Temp"));
-  Serial.print(calibration_temp);
-  serialPrintln_P(PSTR(" Calibration Reference Temperature"));
-  Serial.print(calibration_TC);
-  serialPrintln_P(PSTR(" Which TC is used for Calibration"));
+  serialPrintln_P(PSTR("\n\nProgram Information\n"));
+  serialPrintln_P(PSTR(BANNER_CAT));
+  serialPrint_P(PSTR("verbose_mode = "));
   Serial.print(verbose_mode);
-  serialPrintln_P(PSTR(" Verbose Debug Mode setting"));
+  serialPrintln_P(PSTR(", Verbose Debug Mode when 1"));
+  serialPrint_P(PSTR("channels_displayed = "));
+  Serial.print(channels_displayed);
+  serialPrintln_P(PSTR(", Number of channels  for read TC"));
+  serialPrint_P(PSTR("calibration_TC = "));
+  Serial.print(calibration_TC);
+  serialPrintln_P(PSTR(", Which TC is used for Calibration"));
+  serialPrint_P(PSTR("measure_diff = "));
+  Serial.print(measure_diff);
+  serialPrintln_P(PSTR(", Display TC vs Reference for read TC when 1"));
+  serialPrint_P(PSTR("calibration_temp = "));
+  Serial.print(calibration_temp);
+  serialPrintln_P(PSTR(", Calibration Reference Temperature"));
+  serialPrint_P(PSTR("Toggle_mode = "));
    Serial.print(Toggle_mode);
-  serialPrintln_P(PSTR(" Toggle pin mode ON when 1"));
+  serialPrintln_P(PSTR(", Toggle pin mode ON when 1"));
+  serialPrint_P(PSTR("toggle_pin = "));
    Serial.print(toggle_pin);
-  serialPrintln_P(PSTR(" Pin that toggle when toggle_mode = 1"));
+  serialPrintln_P(PSTR(", Pin that toggle when Toggle_mode = 1"));
+  serialPrint_P(PSTR("read_pin_mode = "));
    Serial.print(read_pin_mode);
-  serialPrintln_P(PSTR(" Read pin mode ON when 1"));
+  serialPrintln_P(PSTR(", Read pin mode ON when 1"));
+  serialPrint_P(PSTR("pin2read = "));
    Serial.print(pin2read);
-  serialPrintln_P(PSTR(" Pin that is read when read_pin_mode = 1"));
+  serialPrintln_P(PSTR(", Pin that is read when read_pin_mode = 1"));
 
 }
 
